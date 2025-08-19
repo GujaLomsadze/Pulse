@@ -1,0 +1,23 @@
+nodes:
+  # Frontend
+  - react-app:service
+  - nginx:loadbalancer
+
+  # Backend
+  - api-server:api
+  - auth-service:service
+  - data-service:service
+
+  # Data layer
+  - postgres:database
+  - redis:cache
+
+dependencies:
+  - react-app -> nginx
+  - nginx -> api-server
+  - api-server -> auth-service
+  - api-server -> data-service
+  - auth-service -> postgres
+  - auth-service -> redis
+  - data-service -> postgres
+  - data-service -> redis

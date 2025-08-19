@@ -1,0 +1,104 @@
+nodes:
+  # Data Sources
+  - id: mobile-app
+    type: service
+    metadata:
+      platform: ios/android
+      events_per_second: 1000
+
+  - id: web-app
+    type: service
+    metadata:
+      platform: web
+      events_per_second: 2000
+
+  - id: iot-gateway
+    type: service
+    metadata:
+      devices: 10000
+      protocol: mqtt
+      events_per_second: 500
+
+  # Message Broker
+  - id: kafka-cluster
+    type: kafka
+    metadata:
+      version: "3.4"
+      brokers: 5
+      partitions_per_topic: 10
+      replication_factor: 3
+      topics:
+        - raw-events
+        - processed-events
+        - alerts
+
+  # Stream Processing
+  - id: stream-processor
+    type: service
+    metadata:
+      framework: kafka-streams
+      parallelism: 4
+      checkpointing: enabled
+
+  - id: anomaly-detector
+    type: service
+    metadata:
+      framework: flink
+      algorithm: isolation-forest
+      window_size: 5m
+
+  # Batch Processing
+  - id: spark-cluster
+    type: service
+    metadata:
+      version: "3.4"
+      nodes: 10
+      executor_memory: "4g"
+      executor_cores: 4
+
+  # Storage
+  - id: data-lake
+    type: storage
+    metadata:
+      type: s3
+      format: parquet
+      partitioning: daily
+      compression: snappy
+
+  - id: timeseries-db
+    type: database
+    metadata:
+      engine: influxdb
+      retention_policy: 30d
+      precision: milliseconds
+
+  - id: analytics-db
+    type: database
+    metadata:
+      engine: clickhouse
+      sharding_key: user_id
+      replicas: 2
+
+dependencies:
+  # Data ingestion
+  - mobile-app -> kafka-cluster
+  - web-app -> kafka-cluster
+  - iot-gateway -> kafka-cluster
+
+  # Stream processing
+  - kafka-cluster -> stream-processor
+  - kafka-cluster -> anomaly-detector
+  - stream-processor -> kafka-cluster  # Processed events
+  - anomaly-detector -> kafka-cluster  # Alerts
+
+  # Storage paths
+  - kafka-cluster -> data-lake         # Raw storage
+  - stream-processor -> timeseries-db  # Real-time metrics
+  - anomaly-detector -> timeseries-db  # Anomaly scores
+
+  # Batch processing
+  - data-lake -> spark-cluster
+  - spark-cluster -> analytics-db
+
+  # Feedback loops
+  - analytics-db -> stream-processor   # Model updates
