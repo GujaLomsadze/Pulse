@@ -1,0 +1,201 @@
+nodes:
+  # API Gateway
+  - id: kong-gateway
+    type: api
+    metadata:
+      version: "3.0"
+      plugins:
+        - rate-limiting
+        - auth
+        - cors
+      endpoints:
+        - /api/v1/*
+        - /api/v2/*
+
+  # Core Services
+  - id: user-service
+    type: service
+    metadata:
+      team: identity
+      language: python
+      framework: fastapi
+      replicas: 3
+      cpu_limit: "500m"
+      memory_limit: "512Mi"
+
+  - id: product-catalog
+    type: service
+    metadata:
+      team: catalog
+      language: java
+      framework: spring-boot
+      replicas: 2
+      cpu_limit: "1000m"
+      memory_limit: "1Gi"
+
+  - id: shopping-cart
+    type: service
+    metadata:
+      team: commerce
+      language: nodejs
+      framework: express
+      replicas: 2
+      session_store: redis
+
+  - id: order-processor
+    type: service
+    metadata:
+      team: fulfillment
+      language: python
+      framework: celery
+      workers: 4
+      queue: rabbitmq
+
+  - id: payment-gateway
+    type: service
+    metadata:
+      team: payments
+      language: go
+      compliance: PCI-DSS
+      encryption: AES-256
+      replicas: 3
+
+  # Databases
+  - id: users-db
+    type: database
+    metadata:
+      engine: postgresql
+      version: "14"
+      role: primary
+      backup_schedule: "0 2 * * *"
+      retention_days: 30
+
+  - id: products-db
+    type: database
+    metadata:
+      engine: mongodb
+      version: "6.0"
+      sharding: enabled
+      replicas: 3
+
+  - id: orders-db
+    type: database
+    metadata:
+      engine: postgresql
+      version: "14"
+      role: primary
+      partitioning: monthly
+
+  # Infrastructure Services
+  - id: redis-cache
+    type: cache
+    metadata:
+      version: "7.0"
+      mode: cluster
+      nodes: 6
+      max_memory: "4GB"
+      eviction_policy: lru
+
+  - id: rabbitmq
+    type: queue
+    metadata:
+      version: "3.11"
+      cluster_size: 3
+      durable_queues: true
+      message_ttl: 86400
+
+  - id: elasticsearch
+    type: storage
+    metadata:
+      version: "8.0"
+      purpose: logging
+      cluster_size: 3
+      retention_days: 7
+      index_pattern: "logs-*"
+
+dependencies:
+  # Gateway to services
+  - source: kong-gateway
+    target: user-service
+    metadata:
+      route: "/api/v1/users/*"
+      rate_limit: 1000
+      timeout_ms: 5000
+
+  - source: kong-gateway
+    target: product-catalog
+    metadata:
+      route: "/api/v1/products/*"
+      rate_limit: 2000
+      timeout_ms: 3000
+
+  - source: kong-gateway
+    target: shopping-cart
+    metadata:
+      route: "/api/v1/cart/*"
+      rate_limit: 500
+      timeout_ms: 5000
+
+  # Service to database connections
+  - source: user-service
+    target: users-db
+    metadata:
+      connection_pool: 20
+      read_preference: primary
+
+  - source: product-catalog
+    target: products-db
+    metadata:
+      connection_pool: 30
+      read_preference: secondary_preferred
+
+  - source: shopping-cart
+    target: redis-cache
+    metadata:
+      purpose: session_store
+      ttl_seconds: 3600
+
+  - source: order-processor
+    target: orders-db
+    metadata:
+      connection_pool: 10
+      transaction_isolation: serializable
+
+  - source: order-processor
+    target: rabbitmq
+    metadata:
+      queue_name: order_events
+      prefetch_count: 1
+
+  # Service to service
+  - source: shopping-cart
+    target: product-catalog
+    metadata:
+      purpose: price_lookup
+      cache_ttl: 300
+
+  - source: order-processor
+    target: payment-gateway
+    metadata:
+      protocol: https
+      retry_count: 3
+      timeout_ms: 10000
+
+  - source: payment-gateway
+    target: users-db
+    metadata:
+      purpose: billing_info
+      read_only: true
+
+  # Logging connections
+  - source: user-service
+    target: elasticsearch
+    metadata:
+      log_level: info
+      batch_size: 100
+
+  - source: payment-gateway
+    target: elasticsearch
+    metadata:
+      log_level: debug
+      batch_size: 50
